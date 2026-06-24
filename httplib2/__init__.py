@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Small, fast HTTP client library for Python."""
 
+from httplib2.decode import ZlibDecoder, DecoderProtocol, LimitDecoder, DeflateDecoder
+
 __author__ = "Joe Gregorio (joe@bitworking.org)"
 __copyright__ = "Copyright 2006, Joe Gregorio"
 __contributors__ = [
@@ -387,24 +389,21 @@ def _entry_disposition(response_headers, request_headers):
 
 def _decompressContent(response, new_content):
     content = new_content
+    encoding_header = "content-encoding"
+    encoding = response.get(encoding_header, None)
     try:
-        encoding = response.get("content-encoding", None)
-        if encoding in ["gzip", "deflate"]:
-            if encoding == "gzip":
-                content = gzip.GzipFile(fileobj=io.BytesIO(new_content)).read()
-            if encoding == "deflate":
-                try:
-                    content = zlib.decompress(content, zlib.MAX_WBITS)
-                except (IOError, zlib.error):
-                    content = zlib.decompress(content, -zlib.MAX_WBITS)
+        if encoding in ["gzip", "deflate", "zlib"]:
+            try:
+                content = LimitDecoder(ZlibDecoder()).consume_bytes(new_content, 0)
+            except (IOError, zlib.error):
+                content = LimitDecoder(DeflateDecoder()).consume_bytes(new_content, 0)
             response["content-length"] = str(len(content))
             # Record the historical presence of the encoding in a way the won't interfere.
-            response["-content-encoding"] = response["content-encoding"]
-            del response["content-encoding"]
+            response["-content-encoding"] = response.pop(encoding_header)
     except (IOError, zlib.error):
         content = ""
         raise FailedToDecompressContent(
-            _("Content purported to be compressed with %s but failed to decompress.") % response.get("content-encoding"),
+            _("Content purported to be compressed with %s but failed to decompress.") % encoding,
             response,
             content,
         )
